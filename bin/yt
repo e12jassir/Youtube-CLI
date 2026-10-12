@@ -584,11 +584,13 @@ main() {
     fi
 
     while :; do
-        local choice
-        choice=$(build_menu_options | fzf "${FZF_OPTS[@]}" \
+        local fzf_out
+        fzf_out=$(build_menu_options | fzf "${FZF_OPTS[@]}" \
+            --disabled \
+            --print-query \
             --prompt="  › " \
             --ghost="buscar en youtube..." \
-            --bind="enter:accept-or-print-query,alt-enter:print({q})+accept" \
+            --bind="esc:cancel" \
             --height=35% \
             --layout=reverse \
             --border=rounded \
@@ -597,34 +599,43 @@ main() {
             --info=hidden)
 
         local status=$?
-        [ $status -ne 0 ] || [ -z "$choice" ] && return 0
+        [ $status -ne 0 ] && return 0
 
-        case "$choice" in
-            "· para ti"*)
-                browse_feed "https://www.youtube.com/" \
-                    "$CACHE_DIR/feed_para_ti.tsv" "para ti" "true"
-                ;;
-            "· tendencias"*)
-                browse_feed "https://www.youtube.com/feed/trending" \
-                    "$CACHE_DIR/feed_tendencias.tsv" "tendencias" "false"
-                ;;
-            "· suscripciones"*)
-                browse_feed "https://www.youtube.com/feed/subscriptions" \
-                    "$CACHE_DIR/feed_suscripciones.tsv" "suscripciones" "false"
-                ;;
-            "· ver después"*)
-                browse_watchlater
-                ;;
-            "· historial"*)
-                browse_history
-                ;;
-            "· salir"*)
-                exit 0
-                ;;
-            *)
-                run_search "$choice"
-                ;;
-        esac
+        local query item
+        query=$(printf "%s\n" "$fzf_out" | sed -n '1p')
+        item=$(printf "%s\n" "$fzf_out" | sed -n '2p')
+
+        if [ -n "$query" ]; then
+            run_search "$query"
+        else
+            [ -z "$item" ] && return 0
+            case "$item" in
+                "· para ti"*)
+                    browse_feed "https://www.youtube.com/" \
+                        "$CACHE_DIR/feed_para_ti.tsv" "para ti" "true"
+                    ;;
+                "· tendencias"*)
+                    browse_feed "https://www.youtube.com/feed/trending" \
+                        "$CACHE_DIR/feed_tendencias.tsv" "tendencias" "false"
+                    ;;
+                "· suscripciones"*)
+                    browse_feed "https://www.youtube.com/feed/subscriptions" \
+                        "$CACHE_DIR/feed_suscripciones.tsv" "suscripciones" "false"
+                    ;;
+                "· ver después"*)
+                    browse_watchlater
+                    ;;
+                "· historial"*)
+                    browse_history
+                    ;;
+                "· salir"*)
+                    exit 0
+                    ;;
+                *)
+                    run_search "$item"
+                    ;;
+            esac
+        fi
     done
 }
 
