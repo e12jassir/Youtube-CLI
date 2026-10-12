@@ -28,11 +28,15 @@ CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/yt/config"
 : "${YT_AUDIO_VOLUME:=75}"
 : "${YT_BROWSER_CMD:=${BROWSER:-zen}}"
 
-# --- SPINNER ---
+# --- SPINNER & CURSOR CONTROL ---
 _spinner_pid=""
 
 spinner_start() {
     local msg="$1"
+    # Ocultar cursor y silenciar entrada de teclado para evitar artefactos
+    printf "\033[?25l" >&2
+    stty -echo 2>/dev/null || true
+
     ( local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
       local i=0
       while true; do
@@ -53,12 +57,15 @@ spinner_stop() {
         wait "$_spinner_pid" 2>/dev/null
         _spinner_pid=""
     fi
-    printf "\r\033[2K" >&2
+    printf "\r\033[2K\033[?25h" >&2
+    stty echo 2>/dev/null || true
 }
 
 # --- CLEANUP & SIGNAL HANDLING ---
 _cleanup() {
     spinner_stop
+    printf "\033[?25h" >&2
+    stty echo 2>/dev/null || true
     kitty +kitten icat --clear --silent 2>/dev/null || true
 }
 trap '_cleanup' EXIT INT TERM
@@ -571,7 +578,7 @@ main() {
                 exit 0
                 ;;
             *)
-                run_search "$cmd"
+                run_search "$choice"
                 ;;
         esac
     done
