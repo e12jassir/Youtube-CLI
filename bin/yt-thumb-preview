@@ -50,13 +50,24 @@ for ((i=0; i<img_h; i++)); do
     printf "\n"
 done
 
-# Ficha técnica minimalista
-printf "\033[90m%*s\033[0m\n" "$cols" '' | tr ' ' '─'
+# Separator top
+printf "\033[38;5;238m%*s\033[0m\n" "$cols" '' | tr ' ' '─'
 
-[ -n "$title" ]    && printf "\033[90m%-10s\033[0m \033[1m%s\033[0m\n" "title" "$title"
-[ -n "$uploader" ] && printf "\033[90m%-10s\033[0m %s\n" "channel" "$uploader"
-[ -n "$duration" ] && printf "\033[90m%-10s\033[0m %s\n" "duration" "$duration"
-printf "\033[90m%-10s\033[0m \033[34myoutu.be/%s\033[0m\n" "url" "$id"
+# Title (bold, prominent)
+[ -n "$title" ] && printf "\n  \033[1m%s\033[0m\n" "$title"
 
-printf "\033[90m%*s\033[0m\n" "$cols" '' | tr ' ' '─'
-printf "\033[90menter: watch · ^a: audio · ^y: copy · ^d: save · ^o: browser · ^r: refresh\033[0m\n"
+# Channel + duration on same line
+if [ -n "$uploader" ] && [ -n "$duration" ]; then
+    printf "  \033[90m%s\033[0m  \033[38;5;238m·\033[0m  \033[90m%s\033[0m\n" "$uploader" "$duration"
+elif [ -n "$uploader" ]; then
+    printf "  \033[90m%s\033[0m\n" "$uploader"
+fi
+
+# URL
+printf "  \033[34myoutu.be/%s\033[0m\n\n" "$id"
+
+# Separator bottom
+printf "\033[38;5;238m%*s\033[0m\n" "$cols" '' | tr ' ' '─'
+
+# Keybinds
+printf "\033[90m  enter: reproducir  ·  ctrl-a: audio  ·  ctrl-y: copiar  ·  ctrl-w: ver después  ·  ctrl-d: descargar  ·  ctrl-o: navegador  ·  ctrl-r: recargar\033[0m\n"

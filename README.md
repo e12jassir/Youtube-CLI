@@ -6,15 +6,21 @@ A minimalist, high-performance terminal YouTube client with an interactive omnib
 
 ## Features
 
-- **Interactive Omnibar Search**: Type any query directly into the main prompt (`youtube › `) and press Enter to search instantly, or navigate feeds without clutter.
-- **Personal Recommendation Algorithm**: Reads session cookies from modern browsers (Zen, Firefox, LibreWolf, Brave, Chromium, Chrome) to load your authentic 100-item YouTube feed.
+- **Interactive Omnibar Search**: Type any query directly into the main prompt and press Enter to search instantly, or navigate feeds without clutter.
+- **Personal Recommendation Algorithm**: Reads session cookies from modern browsers (Zen, Firefox, LibreWolf, Brave, Chromium, Chrome) to load your authentic YouTube feed.
 - **Channel De-Clustering (Interleaving)**: Automatically alternates creators in your recommendations feed to prevent algorithmic echo chambers.
-- **Graceful Guest Fallback**: If no browser session or cookies are detected, automatically switches to global trending and unrestricted direct search.
-- **GPU-Accelerated Kitty Previews**: Pixel-perfect thumbnail previews drawn via Kitty `icat` memory transfer mode with dynamic preview pane geometry and Chafa ANSI fallback.
+- **Graceful Guest Fallback**: If no browser session is detected, automatically switches to global trending and unrestricted direct search.
+- **GPU-Accelerated Kitty Previews**: Pixel-perfect thumbnail previews drawn via Kitty `icat` with dynamic geometry and Chafa ANSI fallback.
+- **Watch Later**: Press `Ctrl+w` on any video to save or remove it from your watch-later list. Accessible from the main menu.
+- **Cache Age Display**: The main menu shows how old each feed's cache is (`4m`, `sin cache`, `ahora`) so you always know if you're seeing fresh data.
+- **Animated Spinner**: Braille spinner animation during network fetches — clean, non-blocking.
+- **Signal Safety**: `trap` on `EXIT`, `INT`, and `TERM` ensures the spinner and Kitty image are always cleaned up, even on Ctrl+C.
+- **Configurable**: All defaults can be overridden via `~/.config/yt/config`.
 - **Modal Control Bindings**:
-  - `Enter`: Fullscreen video playback via `mpv` (Wayland/GPU hardware accelerated).
+  - `Enter`: Fullscreen video playback via `mpv` (detached, non-blocking).
   - `Ctrl + a`: Background audio-only mode.
-  - `Ctrl + y`: Copy short URL (`youtu.be/<id>`) to clipboard via `wl-copy` or `xclip`.
+  - `Ctrl + y`: Copy short URL (`youtu.be/<id>`) to clipboard.
+  - `Ctrl + w`: Toggle watch later (save / remove).
   - `Ctrl + d`: Download video to `~/Videos` in the background.
   - `Ctrl + o`: Open in your default browser.
   - `Ctrl + r`: Force reload feed cache.
@@ -23,11 +29,9 @@ A minimalist, high-performance terminal YouTube client with an interactive omnib
 
 ## Dependencies
 
-Make sure the following tools are available on your system:
-
 | Dependency | Purpose | Arch Linux Package |
 |---|---|---|
-| `fzf` | Interactive fuzzy finder & omnibar UI | `fzf` |
+| `fzf` ≥ 0.36 | Interactive fuzzy finder & omnibar UI | `fzf` |
 | `yt-dlp` | Metadata extractor and stream resolver | `yt-dlp` |
 | `mpv` | Hardware-accelerated media player | `mpv` |
 | `curl` | Fast CDN thumbnail fetching | `curl` |
@@ -68,19 +72,50 @@ yt
 
 ### Direct Search via CLI Arguments
 
-You can also search directly without opening the interactive menu:
-
 ```bash
 yt "rust programming language"
 ```
 
 ### Cookie Configuration
 
-`yt-cli` automatically scans known browser profiles for active sessions. If you use a non-standard browser profile, you can explicitly set the `YT_BROWSER` environment variable:
+`yt-cli` automatically scans known browser profiles for active sessions. To use a specific profile:
 
 ```bash
 export YT_BROWSER="firefox:~/.config/zen/Profiles/myprofile"
 ```
+
+---
+
+## Configuration
+
+Create `~/.config/yt/config` to override any default:
+
+```bash
+# Feed & search sizes
+YT_FEED_SIZE=100        # items fetched from your personal feed
+YT_SEARCH_SIZE=40       # results per search query
+
+# Cache
+YT_CACHE_TTL=900        # seconds before a cached feed is considered stale (default: 15 min)
+
+# Playback
+YT_AUDIO_VOLUME=75      # volume for background audio mode (0–100)
+
+# Browser
+YT_BROWSER_CMD=zen      # browser to open videos with Ctrl+o
+```
+
+---
+
+## State Files
+
+All state is stored under XDG Base Dirs:
+
+| File | Purpose |
+|---|---|
+| `~/.local/state/yt/history.tsv` | Playback history (deduped by video ID) |
+| `~/.local/state/yt/watchlater.tsv` | Watch later list |
+| `~/.cache/yt_terminal/` | Feed cache (TSV) and thumbnails (JPG) |
 
 ---
 
@@ -90,7 +125,7 @@ export YT_BROWSER="firefox:~/.config/zen/Profiles/myprofile"
 yt (omnibox fzf) ───► yt-dlp (flat playlist metadata) ───► python3 (interleaving)
         │
         ├───► yt-thumb-preview ───► Kitty ICAT / Chafa
-        └───► mpv (GPU video / audio)
+        └───► mpv (detached — video / audio)
 ```
 
 ---

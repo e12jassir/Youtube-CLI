@@ -17,6 +17,13 @@ for dep in fzf yt-dlp mpv curl python3; do
     fi
 done
 
+CONFIG_DEST="${XDG_CONFIG_HOME:-$HOME/.config}/yt"
+if [ ! -f "$CONFIG_DEST/config" ]; then
+    mkdir -p "$CONFIG_DEST"
+    cp config.example "$CONFIG_DEST/config"
+    echo "  [i] Archivo de configuración generado en $CONFIG_DEST/config"
+fi
+
 echo ""
 echo "✅ Instalación completada exitosamente."
 echo "Ejecuta 'yt' en tu terminal para iniciar."

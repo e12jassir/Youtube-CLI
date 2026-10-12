@@ -1,0 +1,18 @@
+# Configuración predeterminada para yt-cli
+# Ubicación: ~/.config/yt/config
+
+# Cantidad de elementos obtenidos en el feed personal
+YT_FEED_SIZE=100
+
+# Resultados devueltos por cada búsqueda directa
+YT_SEARCH_SIZE=40
+
+# Tiempo de vida del caché en segundos (15 minutos = 900s)
+YT_CACHE_TTL=900
+
+# Volumen inicial para reproducción en modo audio background (0 a 100)
+YT_AUDIO_VOLUME=75
+
+# Comando o navegador predeterminado para abrir enlaces (Ctrl+O)
+# Ejemplos: zen, firefox, brave, chromium, xdg-open
+YT_BROWSER_CMD="${BROWSER:-zen}"
