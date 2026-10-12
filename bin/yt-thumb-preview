@@ -1,73 +1,118 @@
 #!/usr/bin/env bash
-# yt-thumb-preview - High-resolution terminal preview renderer for yt
-# Dynamic geometry detection with Kitty ICAT GPU protocol & Chafa fallback
+# yt-thumb-preview — fzf preview pane for yt (thumbnail + metadata)
+# usage: yt-thumb-preview ID [TITLE] [CHANNEL] [DURATION] [VIEWS]
+#
+# Env (all optional, exported by `yt`):
+#   YT_CACHE_DIR       cache root            YT_PREVIEW        auto|kitty|chafa|none
+#   YT_THUMB_QUALITY   mq|hq|max (default mq: 320x180, ~10 KB, true 16:9)
+#   NO_COLOR           disable colors
 
-set -e
+id="${1:-}"
+title="${2:-}"
+channel="${3:-}"
+dur="${4:-}"
+views="${5:-}"
 
-id="$1"
-title="$2"
-uploader="$3"
-duration="$4"
+[[ $id =~ ^[A-Za-z0-9_-]{5,}$ ]] || exit 0
 
-[ -z "$id" ] && exit 0
+cache="${YT_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/yt_terminal}"
+thumbs="$cache/thumbs"
+mode="${YT_PREVIEW:-auto}"
+case "${YT_THUMB_QUALITY:-mq}" in
+    hq)  q="hqdefault" ;;
+    max) q="maxresdefault" ;;
+    *)   q="mqdefault" ;;
+esac
+file="$thumbs/${id}_${q}.jpg"
 
-thumb_dir="${XDG_CACHE_HOME:-$HOME/.cache}/yt_terminal/thumbs"
-mkdir -p "$thumb_dir"
-thumb_file="$thumb_dir/$id.jpg"
-
-# Descargar miniatura de alta resolución (CDN oficial de YouTube)
-if [ ! -s "$thumb_file" ]; then
-    curl -sL --max-time 3 "https://i.ytimg.com/vi/$id/maxresdefault.jpg" -o "$thumb_file" || true
-    if [ $(stat -c%s "$thumb_file" 2>/dev/null || echo 0) -lt 3000 ]; then
-        curl -sL --max-time 3 "https://i.ytimg.com/vi/$id/hqdefault.jpg" -o "$thumb_file" || true
-    fi
+if [ -n "${NO_COLOR:-}" ]; then
+    BOLD="" DIM="" SEPC="" LINK="" RST=""
+else
+    BOLD=$'\033[1m' DIM=$'\033[90m' SEPC=$'\033[38;5;238m' LINK=$'\033[34m' RST=$'\033[0m'
 fi
+
+fetch() { # quality -> file
+    local part="$file.part.$$"
+    if curl -sfL --max-time 5 -o "$part" "https://i.ytimg.com/vi/$id/$1.jpg" && [ -s "$part" ]; then
+        mv -f "$part" "$file"
+    else
+        rm -f "$part"
+        return 1
+    fi
+}
+
+if [ "$mode" != "none" ] && [ ! -s "$file" ] && command -v curl >/dev/null 2>&1; then
+    mkdir -p "$thumbs"
+    fetch "$q" || { [ "$q" = "maxresdefault" ] && q="hqdefault" && fetch "$q"; }
+fi
+
+is_kitty() {
+    [ -n "${KITTY_WINDOW_ID:-}" ] || [ "${TERM:-}" = "xterm-kitty" ] || [ "${TERM_PROGRAM:-}" = "ghostty" ]
+}
+icat() {
+    if command -v kitten >/dev/null 2>&1; then kitten icat "$@"
+    elif command -v kitty >/dev/null 2>&1; then kitty +kitten icat "$@"
+    else return 1
+    fi
+}
 
 cols="${FZF_PREVIEW_COLUMNS:-60}"
 lines="${FZF_PREVIEW_LINES:-30}"
+left="${FZF_PREVIEW_LEFT:-0}"
+top="${FZF_PREVIEW_TOP:-0}"
 
-# 65% superior para la imagen
-img_h=$(( lines * 65 / 100 ))
-[ "$img_h" -lt 8 ] && img_h=8
+# Image takes ~60% of the pane; always leave 7 rows for the text block.
+img_h=$(( lines * 60 / 100 ))
 [ "$img_h" -gt $(( lines - 7 )) ] && img_h=$(( lines - 7 ))
-img_w=$cols
+[ "$img_h" -lt 0 ] && img_h=0
 
-x="${FZF_PREVIEW_LEFT:-0}"
-y="${FZF_PREVIEW_TOP:-0}"
-
-if [ -s "$thumb_file" ]; then
-    if [ -n "$KITTY_WINDOW_ID" ] || [ "$TERM" = "xterm-kitty" ]; then
-        kitty +kitten icat --clear --silent --stdin=no --transfer-mode=memory \
-            --scale-up --align=center \
-            --place "${img_w}x${img_h}@${x}x${y}" "$thumb_file" 2>/dev/null || true
-    elif command -v chafa >/dev/null 2>&1; then
-        chafa --format=symbols --symbols=vhalf --colors=full -s "${img_w}x${img_h}" "$thumb_file" 2>/dev/null || true
-    fi
+renderer=""
+if [ "$mode" != "none" ] && [ -s "$file" ] && [ "$img_h" -ge 6 ]; then
+    case "$mode" in
+        kitty) renderer="kitty" ;;
+        chafa) renderer="chafa" ;;
+        *)
+            if is_kitty && { command -v kitten >/dev/null 2>&1 || command -v kitty >/dev/null 2>&1; }; then
+                renderer="kitty"
+            elif command -v chafa >/dev/null 2>&1; then
+                renderer="chafa"
+            fi
+            ;;
+    esac
 fi
 
-# Reservar líneas para evitar sobreescritura de la imagen en Kitty
-for ((i=0; i<img_h; i++)); do
-    printf "\n"
-done
+reserve=0
+case "$renderer" in
+    kitty)
+        icat --clear --silent --stdin=no --transfer-mode=memory --scale-up --align=center \
+            --place "${cols}x${img_h}@${left}x${top}" "$file" 2>/dev/null || true
+        reserve=$img_h   # kitty draws over the cell grid: keep the text below it
+        ;;
+    chafa)
+        colors="full"; [ -n "${NO_COLOR:-}" ] && colors="none"
+        chafa --format=symbols --symbols=vhalf --colors="$colors" --animate=off \
+            -s "${cols}x${img_h}" "$file" 2>/dev/null || true
+        # chafa prints real lines: nothing to reserve (this used to double the gap)
+        ;;
+    *)
+        # No image this time: drop the previous one if the terminal still shows it.
+        if is_kitty; then icat --clear --silent 2>/dev/null || true; fi
+        ;;
+esac
 
-# Separator top
-printf "\033[38;5;238m%*s\033[0m\n" "$cols" '' | tr ' ' '─'
+for ((i = 0; i < reserve; i++)); do printf '\n'; done
 
-# Title (bold, prominent)
-[ -n "$title" ] && printf "\n  \033[1m%s\033[0m\n" "$title"
+sep() { printf '%s%*s%s\n' "$SEPC" "$cols" '' "$RST" | tr ' ' '─'; }
 
-# Channel + duration on same line
-if [ -n "$uploader" ] && [ -n "$duration" ]; then
-    printf "  \033[90m%s\033[0m  \033[38;5;238m·\033[0m  \033[90m%s\033[0m\n" "$uploader" "$duration"
-elif [ -n "$uploader" ]; then
-    printf "  \033[90m%s\033[0m\n" "$uploader"
-fi
+sep
+[ -n "$title" ] && printf '\n  %s%s%s\n' "$BOLD" "$title" "$RST"
 
-# URL
-printf "  \033[34myoutu.be/%s\033[0m\n\n" "$id"
+meta=""
+add_meta() { [ -n "$1" ] && [ "$1" != "-" ] && meta="${meta:+$meta  ·  }$1"; return 0; }
+add_meta "$channel"
+add_meta "$dur"
+[ -n "$views" ] && [ "$views" != "-" ] && add_meta "$views views"
+[ -n "$meta" ] && printf '  %s%s%s\n' "$DIM" "$meta" "$RST"
 
-# Separator bottom
-printf "\033[38;5;238m%*s\033[0m\n" "$cols" '' | tr ' ' '─'
-
-# Keybinds
-printf "\033[90m  enter: ventana  ·  ctrl-p: mini picture  ·  ctrl-f: pantalla completa  ·  ctrl-a: audio  ·  ctrl-y: copiar  ·  ctrl-w: ver después\033[0m\n"
+printf '  %syoutu.be/%s%s\n\n' "$LINK" "$id" "$RST"
+sep

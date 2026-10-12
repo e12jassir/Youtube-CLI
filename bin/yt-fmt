@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""yt-fmt: turn raw yt-dlp rows into fzf rows (dedupe, interleave, columns).
+
+stdin  (TSV): id, title, channel, duration, url, views, live_status [, extra...]
+stdout (TSV): id, url, title, channel, duration, views, DISPLAY
+
+Only the DISPLAY column is shown/searched by fzf (--with-nth=7); the other
+columns travel with the line so actions can use {1}..{6} without re-parsing.
+No field is ever empty (empty -> "-"), so shell `read` with IFS=tab is safe.
+"""
+import argparse
+import os
+import re
+import sys
+import unicodedata
+
+ID_RE = re.compile(r"^[A-Za-z0-9_-]{5,}$")
+
+RESET = "\x1b[0m"
+DIM = "\x1b[90m"
+FAINT = "\x1b[2m"
+RED = "\x1b[31m"
+YELLOW = "\x1b[33m"
+
+
+def clean(text):
+    """Single-line, control-character-free text (safe for TSV and terminals)."""
+    text = text.replace("\t", " ").replace("\r", " ").replace("\n", " ")
+    return "".join(ch for ch in text if ch >= " " and ch != "\x7f").strip()
+
+
+def char_width(ch):
+    if unicodedata.category(ch) in ("Mn", "Me", "Cf"):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def text_width(text):
+    return sum(char_width(c) for c in text)
+
+
+def fit(text, width):
+    """Truncate to a display width (adding an ellipsis) and right-pad."""
+    if width <= 0:
+        return ""
+    if text_width(text) > width:
+        out, used = [], 0
+        for ch in text:
+            w = char_width(ch)
+            if used + w > width - 1:
+                break
+            out.append(ch)
+            used += w
+        text = "".join(out) + "…"
+    return text + " " * (width - text_width(text))
+
+
+def human_views(raw):
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return ""
+    if n >= 1_000_000_000:
+        return ("%.1fB" % (n / 1e9)).replace(".0B", "B")
+    if n >= 1_000_000:
+        return ("%.1fM" % (n / 1e6)).replace(".0M", "M")
+    if n >= 100_000:
+        return "%dK" % (n // 1000)
+    if n >= 1_000:
+        return ("%.1fK" % (n / 1e3)).replace(".0K", "K")
+    return str(n)
+
+
+def read_ids(path):
+    ids = set()
+    if not path:
+        return ids
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                first = line.split("\t", 1)[0].strip()
+                if first:
+                    ids.add(first)
+    except OSError:
+        pass
+    return ids
+
+
+def parse(line, stored):
+    fields = line.rstrip("\n").split("\t")
+    if len(fields) < 5:
+        return None
+    vid = fields[0].strip()
+    if not ID_RE.match(vid):
+        return None
+    row = {
+        "id": vid,
+        "title": clean(fields[1]) or "-",
+        "channel": clean(fields[2]) or "-",
+        "dur": clean(fields[3]) or "NA",
+        "url": clean(fields[4]) or "-",
+        "views": "",
+        "live": "",
+    }
+    if row["channel"] == "NA":
+        row["channel"] = "-"
+    if not stored:
+        row["views"] = clean(fields[5]) if len(fields) > 5 else ""
+        row["live"] = clean(fields[6]) if len(fields) > 6 else ""
+    return row
+
+
+def interleave(rows):
+    """Round-robin by channel so one creator cannot flood the feed."""
+    order, groups = [], {}
+    for row in rows:
+        key = row["channel"]
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(row)
+    out, depth = [], max((len(g) for g in groups.values()), default=0)
+    for i in range(depth):
+        for key in order:
+            if i < len(groups[key]):
+                out.append(groups[key][i])
+    return out
+
+
+def duration_cell(row, color):
+    live = row["live"]
+    if live == "is_live":
+        text, paint = "LIVE", RED
+    elif live == "is_upcoming":
+        text, paint = "SOON", YELLOW
+    elif row["dur"] in ("NA", "", "-"):
+        text, paint = "--:--", DIM
+    else:
+        text, paint = row["dur"], DIM
+    cell = text.ljust(7)
+    return (paint + cell + RESET) if color else cell
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--width", type=int, default=80)
+    ap.add_argument("--interleave", action="store_true")
+    ap.add_argument("--reverse", action="store_true")
+    ap.add_argument("--stored", action="store_true",
+                    help="rows come from history/watch-later (no views/live)")
+    ap.add_argument("--hide-shorts", action="store_true")
+    ap.add_argument("--no-color", action="store_true")
+    ap.add_argument("--history", default="")
+    ap.add_argument("--later", default="")
+    ap.add_argument("--limit", type=int, default=0)
+    args = ap.parse_args()
+
+    color = not (args.no_color or os.environ.get("NO_COLOR"))
+
+    rows = []
+    for line in sys.stdin.read().splitlines():
+        if not line.strip():
+            continue
+        row = parse(line, args.stored)
+        if row is None:
+            continue
+        if args.hide_shorts and "/shorts/" in row["url"]:
+            continue
+        rows.append(row)
+
+    if args.reverse:
+        rows.reverse()
+
+    seen, unique = set(), []
+    for row in rows:
+        if row["id"] in seen:
+            continue
+        seen.add(row["id"])
+        unique.append(row)
+    rows = interleave(unique) if args.interleave else unique
+    if args.limit > 0:
+        rows = rows[: args.limit]
+
+    watched = set() if args.stored else read_ids(args.history)
+    saved = set() if args.stored else read_ids(args.later)
+
+    width = max(args.width, 40)
+    mark_w, dur_w = 2, 7
+    chan_w = min(24, max(10, width * 22 // 100))
+    show_views = any(r["views"] for r in rows) and not args.stored
+    views_w = 6
+    title_w = width - mark_w - dur_w - 2 - 2 - chan_w
+    if show_views:
+        if title_w - (2 + views_w) >= 18:
+            title_w -= 2 + views_w
+        else:
+            show_views = False
+    title_w = max(title_w, 12)
+
+    out = sys.stdout
+    for row in rows:
+        if row["id"] in saved:
+            mark = (YELLOW + "★ " + RESET) if color else "★ "
+        elif row["id"] in watched:
+            mark = (DIM + "✓ " + RESET) if color else "✓ "
+        else:
+            mark = "  "
+        title = fit(row["title"], title_w)
+        if color and row["id"] in watched and row["id"] not in saved:
+            title = FAINT + title + RESET
+        chan = fit(row["channel"], chan_w)
+        chan = (DIM + chan + RESET) if color else chan
+        display = "%s%s  %s  %s" % (mark, duration_cell(row, color), title, chan)
+        if show_views:
+            views = human_views(row["views"]).rjust(views_w)
+            display += "  " + ((DIM + views + RESET) if color else views)
+        views_out = human_views(row["views"]) or "-"
+        out.write("\t".join([
+            row["id"], row["url"], row["title"], row["channel"],
+            row["dur"] if row["dur"] not in ("", "NA") else "-",
+            views_out, display,
+        ]) + "\n")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BrokenPipeError:
+        sys.exit(0)

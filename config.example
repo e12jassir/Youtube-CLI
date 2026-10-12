@@ -1,22 +1,37 @@
-# Configuración predeterminada para yt-cli
-# Ubicación: ~/.config/yt/config
+# yt configuration — ~/.config/yt/config
+# Plain KEY=value lines. Nothing here is executed. Environment variables win.
 
-# Cantidad de elementos obtenidos en el feed personal
-YT_FEED_SIZE=100
+# ── content ──────────────────────────────────────────────
+YT_FEED_SIZE=100            # items fetched for "for you" / subscriptions
+YT_SEARCH_SIZE=40           # results per search
+YT_HIDE_SHORTS=1            # 1 = hide Shorts
+YT_INTERLEAVE=1             # 1 = mix channels in "for you" so none floods the list
+YT_HOME=auto                # auto | foryou | subs | later | history | search
 
-# Resultados devueltos por cada búsqueda directa
-YT_SEARCH_SIZE=40
+# ── speed ────────────────────────────────────────────────
+YT_CACHE_TTL=900            # seconds a feed is considered fresh (stale data still shows instantly)
+YT_COOKIE_TTL=21600         # seconds between reads of your browser's cookie database
+YT_PREFETCH=24              # thumbnails pre-downloaded in parallel (0 = off)
+YT_THUMB_QUALITY=mq         # mq (fast, 16:9) | hq | max
 
-# Tiempo de vida del caché en segundos (15 minutos = 900s)
-YT_CACHE_TTL=900
+# ── playback ─────────────────────────────────────────────
+YT_DEFAULT_MODE=window      # window | pip | fs
+YT_QUALITY=1080             # max video height (0 = no limit)
+YT_AUDIO_VOLUME=75          # volume for audio-only mode (^a)
+YT_PLAYBACK=auto            # auto = direct, falling back to the pipe on errors | direct | pipe
 
-# Volumen inicial para reproducción en modo audio background (0 a 100)
-YT_AUDIO_VOLUME=75
+# ── login (cookies) ──────────────────────────────────────
+YT_COOKIES=auto             # auto | off (guest: search only)
+YT_BROWSERS="zen firefox librewolf brave chromium chrome"   # detection order
+# YT_BROWSER=firefox:/path/to/profile    # force one source (any yt-dlp --cookies-from-browser spec)
+# YT_COOKIES_FILE=~/cookies.txt          # or use an exported Netscape cookies file
 
-# Comando o navegador predeterminado para abrir enlaces (Ctrl+O)
-# Ejemplos: zen, firefox, brave, chromium, xdg-open
-YT_BROWSER_CMD="${BROWSER:-zen}"
-
-# Modo de reproducción predeterminado al presionar Enter:
-# "window" (modo ventana escalada), "pip" (mini picture flotante) o "fs" (pantalla completa)
-YT_DEFAULT_MODE="window"
+# ── interface ────────────────────────────────────────────
+YT_LANG=auto                # auto | es | en
+YT_PREVIEW=auto             # auto | kitty | chafa | none
+YT_HEIGHT=95%
+YT_NOTIFY=1
+# YT_BROWSER_CMD=firefox    # ^o opens this (default: $BROWSER, xdg-open or open)
+# YT_DOWNLOAD_DIR=~/Videos
+# YT_YTDLP_ARGS="--js-runtimes deno"   # extra yt-dlp flags
+# YT_FZF_OPTS=""
