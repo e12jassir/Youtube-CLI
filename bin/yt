@@ -95,7 +95,7 @@ set_defaults() {
     as_enum YT_DEFAULT_MODE window window pip fs
     as_enum YT_PLAYBACK pipe pipe direct auto
     as_enum YT_PREVIEW auto auto kitty chafa none
-    as_enum YT_THUMB_QUALITY mq mq hq max
+    as_enum YT_THUMB_QUALITY max max hq mq
     as_enum YT_HIDE_SHORTS 1 0 1; as_enum YT_INTERLEAVE 1 0 1; as_enum YT_NOTIFY 1 0 1
     as_enum YT_COOKIES auto auto off
     YTDLP="$YT_YTDLP"
@@ -217,13 +217,17 @@ is_kitty_term() {
     [ -n "${KITTY_WINDOW_ID:-}" ] || [ "${TERM:-}" = "xterm-kitty" ] || [ "${TERM_PROGRAM:-}" = "ghostty" ]
 }
 
-cleanup() {
-    [ "${OWN_RUNDIR:-0}" = 1 ] && rm -rf "$YT_RUNDIR"
+kitty_clear() {
     if is_kitty_term; then
         if have kitten; then kitten icat --clear --silent >/dev/null 2>&1
         elif have kitty; then kitty +kitten icat --clear --silent >/dev/null 2>&1
         fi
     fi
+}
+
+cleanup() {
+    [ "${OWN_RUNDIR:-0}" = 1 ] && rm -rf "$YT_RUNDIR"
+    kitty_clear
     return 0
 }
 
@@ -711,6 +715,7 @@ browse() { # view [query]
         --preview="$prev {1} {3} {4} {5} {6}" \
         --preview-window='right:48%:border-left:wrap' \
         "${B[@]}" "${extra[@]}" >/dev/null
+    kitty_clear
     return 0
 }
 
@@ -822,6 +827,7 @@ main_menu() {
     require_deps
     resolve_lang
     while :; do
+        kitty_clear
         local fzf_out
         fzf_out=$(build_menu_options | fzf \
             --color "${YT_FZF_COLORS:-bg:-1,bg+:-1,gutter:-1,border:238,header:241,info:241,prompt:1,pointer:1,marker:2,hl:4,hl+:4,spinner:1,label:238,query:-1,fg:-1,fg+:15}" \

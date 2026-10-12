@@ -7,21 +7,39 @@
 #   YT_THUMB_QUALITY   mq|hq|max (default mq: 320x180, ~10 KB, true 16:9)
 #   NO_COLOR           disable colors
 
+is_kitty() {
+    [ -n "${KITTY_WINDOW_ID:-}" ] || [ "${TERM:-}" = "xterm-kitty" ] || [ "${TERM_PROGRAM:-}" = "ghostty" ]
+}
+icat() {
+    if command -v kitten >/dev/null 2>&1; then kitten icat "$@"
+    elif command -v kitty >/dev/null 2>&1; then kitty +kitten icat "$@"
+    else return 1
+    fi
+}
+clear_icat() {
+    if is_kitty && [ -t 1 ]; then
+        icat --clear --silent 2>/dev/null || true
+    fi
+}
+
 id="${1:-}"
 title="${2:-}"
 channel="${3:-}"
 dur="${4:-}"
 views="${5:-}"
 
-[[ $id =~ ^[A-Za-z0-9_-]{5,}$ ]] || exit 0
+if ! [[ $id =~ ^[A-Za-z0-9_-]{5,}$ ]]; then
+    clear_icat
+    exit 0
+fi
 
 cache="${YT_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/yt_terminal}"
 thumbs="$cache/thumbs"
 mode="${YT_PREVIEW:-auto}"
-case "${YT_THUMB_QUALITY:-mq}" in
+case "${YT_THUMB_QUALITY:-max}" in
+    mq)  q="mqdefault" ;;
     hq)  q="hqdefault" ;;
-    max) q="maxresdefault" ;;
-    *)   q="mqdefault" ;;
+    *)   q="maxresdefault" ;;
 esac
 file="$thumbs/${id}_${q}.jpg"
 
@@ -31,10 +49,19 @@ else
     BOLD=$'\033[1m' DIM=$'\033[90m' SEPC=$'\033[38;5;238m' LINK=$'\033[34m' RST=$'\033[0m'
 fi
 
+file_size() {
+    stat -c%s "$1" 2>/dev/null || stat -f%z "$1" 2>/dev/null || echo 0
+}
+
 fetch() { # quality -> file
     local part="$file.part.$$"
     if curl -sfL --max-time 5 -o "$part" "https://i.ytimg.com/vi/$id/$1.jpg" && [ -s "$part" ]; then
+        if [ "$1" = "maxresdefault" ] && [ "$(file_size "$part")" -lt 3000 ]; then
+            rm -f "$part"
+            return 1
+        fi
         mv -f "$part" "$file"
+        return 0
     else
         rm -f "$part"
         return 1
@@ -46,15 +73,6 @@ if [ "$mode" != "none" ] && [ ! -s "$file" ] && command -v curl >/dev/null 2>&1;
     fetch "$q" || { [ "$q" = "maxresdefault" ] && q="hqdefault" && fetch "$q"; }
 fi
 
-is_kitty() {
-    [ -n "${KITTY_WINDOW_ID:-}" ] || [ "${TERM:-}" = "xterm-kitty" ] || [ "${TERM_PROGRAM:-}" = "ghostty" ]
-}
-icat() {
-    if command -v kitten >/dev/null 2>&1; then kitten icat "$@"
-    elif command -v kitty >/dev/null 2>&1; then kitty +kitten icat "$@"
-    else return 1
-    fi
-}
 
 cols="${FZF_PREVIEW_COLUMNS:-60}"
 lines="${FZF_PREVIEW_LINES:-30}"
