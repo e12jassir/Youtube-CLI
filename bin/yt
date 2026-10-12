@@ -565,7 +565,6 @@ play_video() { # mode id url title channel dur
         --no-terminal
         --really-quiet
         --force-media-title="$title"
-        --demuxer-lavf-probe-info=nostream
         --cache-pause=no
         --demuxer-readahead-secs=2
     )
