@@ -17,8 +17,7 @@ YT_THUMB_QUALITY=mq         # mq (fast, 16:9) | hq | max
 # ── playback ─────────────────────────────────────────────
 YT_DEFAULT_MODE=window      # window | pip | fs
 YT_QUALITY=1080             # max video height (0 = no limit)
-YT_AUDIO_VOLUME=75          # volume for audio-only mode (^a)
-YT_PLAYBACK=auto            # auto = direct, falling back to the pipe on errors | direct | pipe
+YT_PLAYBACK=pipe            # pipe (instant & reliable, bypasses 403 hang) | direct | auto
 
 # ── login (cookies) ──────────────────────────────────────
 YT_COOKIES=auto             # auto | off (guest: search only)
