@@ -116,3 +116,4 @@ add_meta "$dur"
 
 printf '  %syoutu.be/%s%s\n\n' "$LINK" "$id" "$RST"
 sep
+printf '\033[90m  enter: ventana  ·  ctrl-p: mini picture  ·  ctrl-f: pantalla completa  ·  ctrl-a: audio  ·  ctrl-y: copiar  ·  ctrl-w: ver después  ·  esc: volver\033[0m\n'

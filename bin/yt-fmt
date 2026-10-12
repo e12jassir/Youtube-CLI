@@ -186,16 +186,8 @@ def main():
 
     width = max(args.width, 40)
     mark_w, dur_w = 2, 7
-    chan_w = min(18, max(10, width * 18 // 100))
-    show_views = any(r["views"] for r in rows) and not args.stored
-    views_w = 6
-    title_w = width - mark_w - dur_w - 2 - 2 - chan_w
-    if show_views:
-        if title_w - (2 + views_w) >= 28:
-            title_w -= 2 + views_w
-        else:
-            show_views = False
-    title_w = max(title_w, 15)
+    chan_w = min(20, max(10, width * 18 // 100))
+    title_w = max(width - mark_w - dur_w - 2 - 2 - chan_w, 20)
 
     out = sys.stdout
     for row in rows:
@@ -211,9 +203,6 @@ def main():
         chan = fit(row["channel"], chan_w)
         chan = (DIM + chan + RESET) if color else chan
         display = "%s%s  %s  %s" % (mark, duration_cell(row, color), title, chan)
-        if show_views:
-            views = human_views(row["views"]).rjust(views_w)
-            display += "  " + ((DIM + views + RESET) if color else views)
         views_out = human_views(row["views"]) or "-"
         out.write("\t".join([
             row["id"], row["url"], row["title"], row["channel"],

@@ -117,8 +117,8 @@ t() {
     if [ "$YT_LANG" = es ]; then
         case $1 in
             tab_foryou) echo "para ti" ;;          tab_subs) echo "suscripciones" ;;
-            tab_later) echo "guardados" ;;         tab_history) echo "historial" ;;
-            tab_search) echo "búsqueda" ;;
+            tab_trending) echo "tendencias" ;;     tab_later) echo "guardados" ;;
+            tab_history) echo "historial" ;;       tab_search) echo "búsqueda" ;;
             header1) echo "⏎ reproducir · ^p mini · ^f pantalla · ^a audio · ^w guardar · ^y copiar · ^d bajar · ^s buscar · alt-1..4 tabs" ;;
             header2) echo "" ;;
             empty_feed) echo "sin resultados — ¿sesión iniciada en YouTube en tu navegador? prueba: yt --doctor" ;;
@@ -134,8 +134,8 @@ t() {
     else
         case $1 in
             tab_foryou) echo "for you" ;;          tab_subs) echo "subscriptions" ;;
-            tab_later) echo "saved" ;;             tab_history) echo "history" ;;
-            tab_search) echo "search" ;;
+            tab_trending) echo "trending" ;;       tab_later) echo "saved" ;;
+            tab_history) echo "history" ;;         tab_search) echo "search" ;;
             header1) echo "⏎ play · ^p mini · ^f fullscreen · ^a audio · ^w save · ^y copy · ^d download · ^s search · alt-1..4 tabs" ;;
             header2) echo "" ;;
             empty_feed) echo "no results — are you signed in to YouTube in your browser? try: yt --doctor" ;;
@@ -408,8 +408,9 @@ view_raw() { # view mode(auto|cached|refresh) -> raw rows (stale-cache fallback 
     local view=$1 mode=$2 src file data
     file="$(view_cache_file "$view")"
     case $view in
-        foryou) src="https://www.youtube.com/" ;;
-        subs)   src="https://www.youtube.com/feed/subscriptions" ;;
+        foryou)   src="https://www.youtube.com/" ;;
+        trending) src="https://www.youtube.com/feed/trending" ;;
+        subs)     src="https://www.youtube.com/feed/subscriptions" ;;
         *) return 0 ;;
     esac
     case $mode in
@@ -472,6 +473,7 @@ emit_rows() { # view mode query
     case $view in
         foryou)  [ "$YT_INTERLEAVE" = 1 ] && o+=(--interleave)
                  view_raw foryou "$mode" | format_rows "${o[@]}" ;;
+        trending) view_raw trending "$mode" | format_rows "${o[@]}" ;;
         subs)    view_raw subs "$mode" | format_rows "${o[@]}" ;;
         later)   format_rows --stored --reverse < "$WATCHLATER_FILE" ;;
         history) format_rows --stored --reverse < "$HISTORY_FILE" ;;
@@ -706,9 +708,8 @@ browse() { # view [query]
 
     initial_rows "$view" "$query" | fzf "${F[@]}" \
         --border-label=" $(tab_label "$view") " \
-        --header="$(t header1)" \
         --preview="$prev {1} {3} {4} {5} {6}" \
-        --preview-window='right,50%,border-left,wrap,<90(down,45%,border-top,wrap)' \
+        --preview-window='right:48%:border-left:wrap' \
         "${B[@]}" "${extra[@]}" >/dev/null
     return 0
 }
@@ -808,6 +809,60 @@ config: ${XDG_CONFIG_HOME:-~/.config}/yt/config  (see config.example)
 EOF
 }
 
+build_menu_options() {
+    if cookies_possible; then
+        printf "· para ti\n· tendencias\n· suscripciones\n"
+    else
+        printf "· tendencias\n"
+    fi
+    printf "· ver después\n· historial\n· salir\n"
+}
+
+main_menu() {
+    require_deps
+    resolve_lang
+    while :; do
+        local fzf_out
+        fzf_out=$(build_menu_options | fzf \
+            --color "${YT_FZF_COLORS:-bg:-1,bg+:-1,gutter:-1,border:238,header:241,info:241,prompt:1,pointer:1,marker:2,hl:4,hl+:4,spinner:1,label:238,query:-1,fg:-1,fg+:15}" \
+            --pointer="▌" \
+            --marker="●" \
+            --scrollbar="│" \
+            --disabled \
+            --print-query \
+            --prompt="  › " \
+            --ghost="buscar en youtube..." \
+            --bind="esc:cancel" \
+            --height=35% \
+            --layout=reverse \
+            --border=rounded \
+            --border-label=" yt " \
+            --border-label-pos=2 \
+            --info=hidden)
+
+        local status=$?
+        [ $status -ne 0 ] && return 0
+
+        local query item
+        query=$(printf "%s\n" "$fzf_out" | sed -n '1p')
+        item=$(printf "%s\n" "$fzf_out" | sed -n '2p')
+
+        if [ -n "$query" ]; then
+            browse search "$query"
+        else
+            [ -z "$item" ] && return 0
+            case "$item" in
+                "· para ti"*)        browse foryou ;;
+                "· tendencias"*)     browse trending ;;
+                "· suscripciones"*)  browse subs ;;
+                "· ver después"*)    browse later ;;
+                "· historial"*)      browse history ;;
+                "· salir"*)          return 0 ;;
+            esac
+        fi
+    done
+}
+
 main() {
     case "${1:-}" in
         __list)    shift; init light; cmd_list "$@"; return 0 ;;
@@ -820,11 +875,11 @@ main() {
         --doctor)         doctor ;;
         --clear-cache)    clear_cache ;;
         --forget-cookies) forget_cookies ;;
-        --view)           shift; browse "${1:-$(home_view)}" ;;
+        --view)           shift; browse "${1:-foryou}" ;;
         -s|--search)      shift; browse search "$*" ;;
         --)               shift; browse search "$*" ;;
         -*)               usage >&2; return 2 ;;
-        "")               browse "$(home_view)" ;;
+        "")               main_menu ;;
         *)                browse search "$*" ;;
     esac
 }
