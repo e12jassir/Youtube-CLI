@@ -16,9 +16,14 @@ A minimalist, high-performance terminal YouTube client with an interactive omnib
 - **Animated Spinner**: Braille spinner animation during network fetches — clean, non-blocking.
 - **Signal Safety**: `trap` on `EXIT`, `INT`, and `TERM` ensures the spinner and Kitty image are always cleaned up, even on Ctrl+C.
 - **Configurable**: All defaults can be overridden via `~/.config/yt/config`.
+- **Multi-Mode Playback**: Seamless support for windowed mode, floating Picture-in-Picture (PiP), and fullscreen.
+- **Robust Authenticated Pipeline**: Pipes authenticated video streams directly from `yt-dlp` to `mpv` stdin, completely bypassing YouTube CDN 403 Forbidden errors and bot checks.
+- **IPC Render Synchronization**: Terminal spinner runs smoothly until `mpv` actually draws the first video frame, firing desktop notifications accurately on playback start.
 - **Modal Control Bindings**:
-  - `Enter`: Fullscreen video playback via `mpv` (detached, non-blocking).
-  - `Ctrl + a`: Background audio-only mode.
+  - `Enter`: Playback using default mode configured in `~/.config/yt/config` (`window` by default).
+  - `Ctrl + p`: Picture-in-Picture (PiP) floating window pinned on top.
+  - `Ctrl + f`: Fullscreen playback via `mpv`.
+  - `Ctrl + a`: Background audio-only stream.
   - `Ctrl + y`: Copy short URL (`youtu.be/<id>`) to clipboard.
   - `Ctrl + w`: Toggle watch later (save / remove).
   - `Ctrl + d`: Download video to `~/Videos` in the background.
@@ -100,6 +105,7 @@ YT_CACHE_TTL=900        # seconds before a cached feed is considered stale (defa
 
 # Playback
 YT_AUDIO_VOLUME=75      # volume for background audio mode (0–100)
+YT_DEFAULT_MODE=window  # default playback mode on Enter: "window", "pip", or "fs"
 
 # Browser
 YT_BROWSER_CMD=zen      # browser to open videos with Ctrl+o

@@ -16,3 +16,7 @@ YT_AUDIO_VOLUME=75
 # Comando o navegador predeterminado para abrir enlaces (Ctrl+O)
 # Ejemplos: zen, firefox, brave, chromium, xdg-open
 YT_BROWSER_CMD="${BROWSER:-zen}"
+
+# Modo de reproducción predeterminado al presionar Enter:
+# "window" (modo ventana escalada), "pip" (mini picture flotante) o "fs" (pantalla completa)
+YT_DEFAULT_MODE="window"

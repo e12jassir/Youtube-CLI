@@ -26,6 +26,7 @@ CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/yt/config"
 : "${YT_SEARCH_SIZE:=40}"
 : "${YT_CACHE_TTL:=900}"
 : "${YT_AUDIO_VOLUME:=75}"
+: "${YT_DEFAULT_MODE:=window}"
 : "${YT_BROWSER_CMD:=${BROWSER:-zen}}"
 
 # --- SPINNER & CURSOR CONTROL ---
@@ -266,6 +267,118 @@ record_history() {
     printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$id" "$title" "$uploader" "$duration" "$url" "$ts" >> "$HISTORY_FILE"
 }
 
+# --- VIDEO PLAYBACK ---
+play_video() {
+    local mode="$1" # "window", "pip", "fs"
+    local title="$2" uploader="$3" duration="$4" id="$5" url="$6"
+
+    record_history "$title" "$uploader" "$duration" "$id" "$url"
+    spinner_start ""
+
+    local ipc_sock="/tmp/yt_mpv_$$.sock"
+    rm -f "$ipc_sock"
+
+    local mpv_opts=(
+        --hwdec=auto
+        --no-terminal
+        --really-quiet
+        --force-media-title="$title"
+        --input-ipc-server="$ipc_sock"
+    )
+
+    case "$mode" in
+        "pip")
+            mpv_opts+=(--no-fs --ontop --title="Picture-in-Picture" --geometry=30%x30%-20-20 --autofit=28%)
+            ;;
+        "fs")
+            mpv_opts+=(--fs --title="$title")
+            ;;
+        *) # window
+            mpv_opts+=(--no-fs --autofit=65%x65% --title="$title")
+            ;;
+    esac
+
+    # Stream video via yt-dlp pipe directly to mpv stdin to bypass YouTube 403 Forbidden & bot checks
+    (
+        yt-dlp "${COOKIE_ARG[@]}" \
+            -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best" \
+            --remux-video mkv -o - "$url" 2>/dev/null \
+            | mpv "${mpv_opts[@]}" -
+    ) >/dev/null 2>&1 &
+    local pipeline_pid=$!
+    disown "$pipeline_pid" 2>/dev/null || true
+
+    # Esperar a que la ventana de video y el renderizador estén efectivamente en pantalla
+    python3 -c "
+import socket, json, time, sys, os
+
+sock_path = '$ipc_sock'
+pid = $pipeline_pid
+
+start_time = time.time()
+connected = False
+s = None
+
+# 1. Esperar que mpv levante el socket IPC
+while time.time() - start_time < 20:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        sys.exit(0)
+
+    if os.path.exists(sock_path):
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.connect(sock_path)
+            s.settimeout(0.5)
+            connected = True
+            break
+        except Exception:
+            pass
+    time.sleep(0.05)
+
+# 2. Polling activo de la ventana y frames de video
+if connected and s:
+    buf = ''
+    while time.time() - start_time < 30:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            break
+
+        try:
+            cmd = json.dumps({'command': ['get_property', 'vo-configured']}) + '\n'
+            s.sendall(cmd.encode())
+            chunk = s.recv(2048).decode()
+            buf += chunk
+            while '\n' in buf:
+                line, buf = buf.split('\n', 1)
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                    if msg.get('data') is True or msg.get('event') == 'video-reconfig' or msg.get('event') == 'playback-restart':
+                        s.close()
+                        sys.exit(0)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        time.sleep(0.06)
+
+    try:
+        s.close()
+    except Exception:
+        pass
+" 2>/dev/null || true
+
+    spinner_stop
+    rm -f "$ipc_sock"
+    notify-send --app-name="yt" --urgency=low "yt" "▶ $title" 2>/dev/null || true
+    return 0
+}
+
 # --- BROWSE ITEMS ---
 browse_items() {
     local feed_data="$1"
@@ -283,10 +396,10 @@ browse_items() {
         --with-nth=1 \
         --prompt="  › " \
         --ghost="filtrar..." \
-        --header=$'enter: reproducir  ·  ctrl-a: audio  ·  ctrl-y: copiar  ·  ctrl-w: ver después  ·  ctrl-d: descargar  ·  ctrl-o: navegador  ·  ctrl-r: recargar' \
+        --header=$'enter: reproducir (ventana)  ·  ctrl-p: mini picture  ·  ctrl-f: pantalla completa  ·  ctrl-a: audio  ·  ctrl-y: copiar  ·  ctrl-w: ver después  ·  ctrl-d: descargar  ·  ctrl-o: navegador  ·  ctrl-r: recargar' \
         --preview='yt-thumb-preview {5} {2} {3} {4}' \
         --preview-window=right:48%:border-left:wrap \
-        --expect=ctrl-a,ctrl-y,ctrl-d,ctrl-o,ctrl-r,ctrl-w \
+        --expect=ctrl-a,ctrl-y,ctrl-d,ctrl-o,ctrl-r,ctrl-w,ctrl-p,ctrl-f \
         --height=95% \
         --layout=reverse \
         --border=rounded \
@@ -311,8 +424,10 @@ browse_items() {
             ;;
         "ctrl-a")
             notify-send --app-name="yt" --urgency=low "yt" "🎧 $title" 2>/dev/null || true
-            nohup mpv --no-video --volume="$YT_AUDIO_VOLUME" --really-quiet --no-terminal "$url" \
-                >/dev/null 2>&1 &
+            (
+                yt-dlp "${COOKIE_ARG[@]}" -f "bestaudio/best" -o - "$url" 2>/dev/null \
+                    | mpv --no-video --volume="$YT_AUDIO_VOLUME" --really-quiet --no-terminal -
+            ) >/dev/null 2>&1 &
             return 0
             ;;
         "ctrl-y")
@@ -352,87 +467,16 @@ browse_items() {
             nohup "$browser_cmd" "$url" >/dev/null 2>&1 &
             return 0
             ;;
+        "ctrl-p")
+            play_video "pip" "$title" "$uploader" "$duration" "$id" "$url"
+            return 0
+            ;;
+        "ctrl-f")
+            play_video "fs" "$title" "$uploader" "$duration" "$id" "$url"
+            return 0
+            ;;
         "")
-            record_history "$title" "$uploader" "$duration" "$id" "$url"
-            spinner_start ""
-            local ipc_sock="/tmp/yt_mpv_$$.sock"
-            rm -f "$ipc_sock"
-
-            # mpv optimizado: ytdl-format rápido (evita 4K masivo en buffer inicial)
-            mpv --fs --hwdec=auto --no-terminal --really-quiet \
-                --ytdl-format="bestvideo[height<=1080]+bestaudio/best[height<=1080]/best" \
-                --input-ipc-server="$ipc_sock" "$url" >/dev/null 2>&1 &
-            local mpv_pid=$!
-
-            # Esperar a que la ventana de video y el renderizador estén efectivamente en pantalla
-            python3 -c "
-import socket, json, time, sys, os
-
-sock_path = '$ipc_sock'
-pid = $mpv_pid
-
-start_time = time.time()
-connected = False
-s = None
-
-# 1. Esperar que mpv levante el socket IPC
-while time.time() - start_time < 15:
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        sys.exit(0)
-
-    if os.path.exists(sock_path):
-        try:
-            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            s.connect(sock_path)
-            s.settimeout(0.5)
-            connected = True
-            break
-        except Exception:
-            pass
-    time.sleep(0.05)
-
-# 2. Polling activo de la ventana y frames de video
-if connected and s:
-    buf = ''
-    while time.time() - start_time < 25:
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            break
-
-        try:
-            # Preguntar por vo-configured
-            cmd = json.dumps({'command': ['get_property', 'vo-configured']}) + '\n'
-            s.sendall(cmd.encode())
-            chunk = s.recv(2048).decode()
-            buf += chunk
-            while '\n' in buf:
-                line, buf = buf.split('\n', 1)
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    msg = json.loads(line)
-                    # Si recibimos confirmacion de VO activo o evento de reconfiguración de video
-                    if msg.get('data') is True or msg.get('event') == 'video-reconfig' or msg.get('event') == 'playback-restart':
-                        s.close()
-                        sys.exit(0)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        time.sleep(0.06)
-
-    try:
-        s.close()
-    except Exception:
-        pass
-" 2>/dev/null || true
-
-            spinner_stop
-            rm -f "$ipc_sock"
+            play_video "${YT_DEFAULT_MODE:-window}" "$title" "$uploader" "$duration" "$id" "$url"
             return 0
             ;;
     esac

@@ -70,4 +70,4 @@ printf "  \033[34myoutu.be/%s\033[0m\n\n" "$id"
 printf "\033[38;5;238m%*s\033[0m\n" "$cols" '' | tr ' ' '─'
 
 # Keybinds
-printf "\033[90m  enter: reproducir  ·  ctrl-a: audio  ·  ctrl-y: copiar  ·  ctrl-w: ver después  ·  ctrl-d: descargar  ·  ctrl-o: navegador  ·  ctrl-r: recargar\033[0m\n"
+printf "\033[90m  enter: ventana  ·  ctrl-p: mini picture  ·  ctrl-f: pantalla completa  ·  ctrl-a: audio  ·  ctrl-y: copiar  ·  ctrl-w: ver después\033[0m\n"
