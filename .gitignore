@@ -1,0 +1,13 @@
+# Cache & Temporary files
+thumbs/
+*.tsv
+*.sqlite
+.cache/
+.local/
+__pycache__/
+
+# OS & Editor
+.DS_Store
+*.swp
+*.swo
+*~

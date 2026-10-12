@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# yt-thumb-preview - High-resolution terminal preview renderer for yt
+# Dynamic geometry detection with Kitty ICAT GPU protocol & Chafa fallback
+
+set -e
+
+id="$1"
+title="$2"
+uploader="$3"
+duration="$4"
+
+[ -z "$id" ] && exit 0
+
+thumb_dir="${XDG_CACHE_HOME:-$HOME/.cache}/yt_terminal/thumbs"
+mkdir -p "$thumb_dir"
+thumb_file="$thumb_dir/$id.jpg"
+
+# Descargar miniatura de alta resolución (CDN oficial de YouTube)
+if [ ! -s "$thumb_file" ]; then
+    curl -sL --max-time 3 "https://i.ytimg.com/vi/$id/maxresdefault.jpg" -o "$thumb_file" || true
+    if [ $(stat -c%s "$thumb_file" 2>/dev/null || echo 0) -lt 3000 ]; then
+        curl -sL --max-time 3 "https://i.ytimg.com/vi/$id/hqdefault.jpg" -o "$thumb_file" || true
+    fi
+fi
+
+cols="${FZF_PREVIEW_COLUMNS:-60}"
+lines="${FZF_PREVIEW_LINES:-30}"
+
+# 65% superior para la imagen
+img_h=$(( lines * 65 / 100 ))
+[ "$img_h" -lt 8 ] && img_h=8
+[ "$img_h" -gt $(( lines - 7 )) ] && img_h=$(( lines - 7 ))
+img_w=$cols
+
+x="${FZF_PREVIEW_LEFT:-0}"
+y="${FZF_PREVIEW_TOP:-0}"
+
+if [ -s "$thumb_file" ]; then
+    if [ -n "$KITTY_WINDOW_ID" ] || [ "$TERM" = "xterm-kitty" ]; then
+        kitty +kitten icat --clear --silent --stdin=no --transfer-mode=memory \
+            --scale-up --align=center \
+            --place "${img_w}x${img_h}@${x}x${y}" "$thumb_file" 2>/dev/null || true
+    elif command -v chafa >/dev/null 2>&1; then
+        chafa --format=symbols --symbols=vhalf --colors=full -s "${img_w}x${img_h}" "$thumb_file" 2>/dev/null || true
+    fi
+fi
+
+# Reservar líneas para evitar sobreescritura de la imagen en Kitty
+for ((i=0; i<img_h; i++)); do
+    printf "\n"
+done
+
+# Ficha técnica minimalista
+printf "\033[90m%*s\033[0m\n" "$cols" '' | tr ' ' '─'
+
+[ -n "$title" ]    && printf "\033[90m%-10s\033[0m \033[1m%s\033[0m\n" "title" "$title"
+[ -n "$uploader" ] && printf "\033[90m%-10s\033[0m %s\n" "channel" "$uploader"
+[ -n "$duration" ] && printf "\033[90m%-10s\033[0m %s\n" "duration" "$duration"
+printf "\033[90m%-10s\033[0m \033[34myoutu.be/%s\033[0m\n" "url" "$id"
+
+printf "\033[90m%*s\033[0m\n" "$cols" '' | tr ' ' '─'
+printf "\033[90menter: watch · ^a: audio · ^y: copy · ^d: save · ^o: browser · ^r: refresh\033[0m\n"

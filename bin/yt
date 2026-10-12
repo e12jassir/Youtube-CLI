@@ -1,0 +1,357 @@
+#!/usr/bin/env bash
+# yt - Minimalist, high-performance terminal YouTube client
+# Supports Kitty ICAT GPU previews, multi-browser cookies & graceful guest fallback.
+
+set -e
+
+VERSION="1.0.0"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/yt_terminal"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/yt"
+mkdir -p "$CACHE_DIR" "$STATE_DIR"
+
+HISTORY_FILE="$STATE_DIR/history.tsv"
+[ -f "$HISTORY_FILE" ] || touch "$HISTORY_FILE"
+
+# --- DETECCIÓN MODULAR DE NAVEGADORES Y COOKIES ---
+detect_browser_cookies() {
+    # 1. Variable de entorno explícita (e.g. YT_BROWSER="zen")
+    if [ -n "$YT_BROWSER" ]; then
+        COOKIE_ARG=(--cookies-from-browser "$YT_BROWSER")
+        COOKIE_STATUS="custom ($YT_BROWSER)"
+        return 0
+    fi
+
+    # 2. Búsqueda automática en navegadores conocidos (Zen, Firefox, LibreWolf, Brave, Chrome, Chromium)
+    local zen_prof
+    zen_prof=$(find "${XDG_CONFIG_HOME:-$HOME/.config}/zen" -maxdepth 1 -name "*.Default*" -print -quit 2>/dev/null || true)
+    if [ -n "$zen_prof" ] && [ -f "$zen_prof/cookies.sqlite" ]; then
+        COOKIE_ARG=(--cookies-from-browser "firefox:$zen_prof")
+        COOKIE_STATUS="zen"
+        return 0
+    fi
+
+    local ff_prof
+    ff_prof=$(find "${XDG_CONFIG_HOME:-$HOME/.mozilla/firefox}" -maxdepth 1 -name "*.default-release*" -o -name "*.default*" -print -quit 2>/dev/null || true)
+    if [ -n "$ff_prof" ] && [ -f "$ff_prof/cookies.sqlite" ]; then
+        COOKIE_ARG=(--cookies-from-browser "firefox:$ff_prof")
+        COOKIE_STATUS="firefox"
+        return 0
+    fi
+
+    local lw_prof
+    lw_prof=$(find "${XDG_CONFIG_HOME:-$HOME/.librewolf}" -maxdepth 1 -name "*.default-release*" -o -name "*.default*" -print -quit 2>/dev/null || true)
+    if [ -n "$lw_prof" ] && [ -f "$lw_prof/cookies.sqlite" ]; then
+        COOKIE_ARG=(--cookies-from-browser "firefox:$lw_prof")
+        COOKIE_STATUS="librewolf"
+        return 0
+    fi
+
+    for br in brave-browser brave chromium google-chrome-stable google-chrome; do
+        if command -v "$br" >/dev/null 2>&1; then
+            COOKIE_ARG=(--cookies-from-browser "$br")
+            COOKIE_STATUS="$br"
+            return 0
+        fi
+    done
+
+    # 3. Fallback: Modo invitado / sin cuenta
+    COOKIE_ARG=()
+    COOKIE_STATUS="guest"
+    return 1
+}
+
+COOKIE_ARG=()
+COOKIE_STATUS="guest"
+detect_browser_cookies || true
+
+# Tema transparente nativo: respeta opacidad de Kitty y paletas dinámicas
+FZF_THEME="--color=bg:-1,bg+:-1,gutter:-1,border:8,header:8,info:8,prompt:4,pointer:1,marker:2,hl:4,hl+:4"
+
+is_cache_valid() {
+    local file="$1"
+    local ttl="${2:-900}" # 15 minutos por defecto
+    if [ -s "$file" ]; then
+        local age=$(( $(date +%s) - $(stat -c %Y "$file" 2>/dev/null || echo 0) ))
+        [ "$age" -lt "$ttl" ] && return 0
+    fi
+    return 1
+}
+
+# Algoritmo de des-agrupación e intercalado por canal (máxima variedad personal)
+interleave_by_channel() {
+    python3 -c "
+import sys
+from collections import defaultdict
+
+lines = [line.strip().split('\t') for line in sys.stdin if line.strip()]
+by_channel = defaultdict(list)
+channels_order = []
+
+for item in lines:
+    if len(item) < 5:
+        continue
+    channel = item[1]
+    if channel not in by_channel:
+        channels_order.append(channel)
+    by_channel[channel].append(item)
+
+if not by_channel:
+    sys.exit(0)
+
+max_len = max(len(v) for v in by_channel.values())
+interleaved = []
+for i in range(max_len):
+    for ch in channels_order:
+        if i < len(by_channel[ch]):
+            interleaved.append(by_channel[ch][i])
+
+for item in interleaved:
+    print('\t'.join(item))
+"
+}
+
+format_feed_items() {
+    local raw_data="$1"
+    local formatted=""
+
+    while IFS=$'\t' read -r title uploader duration id url; do
+        [ -z "$id" ] && continue
+        [ -z "$duration" ] || [ "$duration" = "NA" ] && duration="live"
+        
+        clean_title="${title//$'\r'/}"
+        clean_title="${clean_title//$'\n'/}"
+        clean_uploader="${uploader//$'\r'/}"
+        clean_uploader="${clean_uploader//$'\n'/}"
+        
+        printf -v display_str " \033[90m%-7s\033[0m  %-58.58s  \033[90m%s\033[0m" "$duration" "$clean_title" "$clean_uploader"
+        formatted+="${display_str}"$'\t'"${clean_title}"$'\t'"${clean_uploader}"$'\t'"${duration}"$'\t'"${id}"$'\t'"${url}"$'\n'
+    done <<< "$raw_data"
+
+    printf "%s" "$formatted"
+}
+
+fetch_feed() {
+    local feed_url="$1"
+    local cache_file="$2"
+    local force_refresh="$3"
+    local interleave="$4"
+
+    if [ "$force_refresh" != "true" ] && is_cache_valid "$cache_file"; then
+        cat "$cache_file"
+        return 0
+    fi
+
+    printf "\033[90m· sincronizando feed (%s)...\033[0m\n" "$COOKIE_STATUS" >&2
+    
+    local raw_data
+    raw_data=$(yt-dlp "${COOKIE_ARG[@]}" --flat-playlist \
+        --print "%(title)s"$'\t'"%(uploader)s"$'\t'"%(duration_string)s"$'\t'"%(id)s"$'\t'"%(url)s" \
+        --playlist-items 1:100 "$feed_url" 2>/dev/null || true)
+
+    if [ -z "$raw_data" ]; then
+        [ -s "$cache_file" ] && cat "$cache_file"
+        return 0
+    fi
+
+    if [ "$interleave" = "true" ]; then
+        raw_data=$(printf "%s\n" "$raw_data" | interleave_by_channel)
+    fi
+
+    local formatted
+    formatted=$(format_feed_items "$raw_data")
+
+    printf "%s" "$formatted" > "$cache_file"
+    printf "%s" "$formatted"
+}
+
+search_feed() {
+    local query="$1"
+    printf "\033[90m· buscando: %s...\033[0m\n" "$query" >&2
+
+    local raw_data
+    raw_data=$(yt-dlp "${COOKIE_ARG[@]}" --flat-playlist \
+        --print "%(title)s"$'\t'"%(uploader)s"$'\t'"%(duration_string)s"$'\t'"%(id)s"$'\t'"%(url)s" \
+        --playlist-items 1:40 "ytsearch40:$query" 2>/dev/null || true)
+
+    format_feed_items "$raw_data"
+}
+
+record_history() {
+    local entry="$1"
+    printf "%s\n" "$entry" >> "$HISTORY_FILE"
+}
+
+browse_items() {
+    local feed_data="$1"
+    local prompt_title="$2"
+
+    if [ -z "$feed_data" ]; then
+        printf "\033[90m· no se encontraron resultados.\033[0m\n"
+        sleep 1.2
+        return 1
+    fi
+
+    local fzf_out
+    fzf_out=$(printf "%s" "$feed_data" | fzf $FZF_THEME --ansi \
+        --delimiter=$'\t' \
+        --with-nth=1 \
+        --prompt="$prompt_title › " \
+        --header="enter: ver · ^a: audio · ^y: copiar · ^d: guardar · ^o: browser · ^r: recargar" \
+        --preview='yt-thumb-preview {5} {2} {3} {4}' \
+        --preview-window=right:50%:wrap \
+        --expect=ctrl-a,ctrl-y,ctrl-d,ctrl-o,ctrl-r \
+        --height=95% \
+        --layout=reverse \
+        --border=rounded)
+
+    kitty +kitten icat --clear --silent 2>/dev/null || true
+    [ -z "$fzf_out" ] && return 0
+
+    local key
+    key=$(printf "%s\n" "$fzf_out" | head -n 1)
+    local selection
+    selection=$(printf "%s\n" "$fzf_out" | tail -n +2)
+    [ -z "$selection" ] && return 0
+
+    IFS=$'\t' read -r display title uploader duration id url <<< "$selection"
+
+    case "$key" in
+        "ctrl-r")
+            return 2 # Código para recargar
+            ;;
+        "ctrl-a")
+            notify-send "YouTube" "🎧 Audio: $title" 2>/dev/null || true
+            nohup mpv --no-video --fs=no --volume=75 "$url" >/dev/null 2>&1 &
+            return 0
+            ;;
+        "ctrl-y")
+            local share_url="https://youtu.be/$id"
+            if command -v wl-copy >/dev/null 2>&1; then
+                printf "%s" "$share_url" | wl-copy
+            elif command -v xclip >/dev/null 2>&1; then
+                printf "%s" "$share_url" | xclip -selection clipboard
+            fi
+            notify-send "YouTube" "📋 Enlace copiado:\n$share_url" 2>/dev/null || true
+            return 0
+            ;;
+        "ctrl-d")
+            local dest_dir="${XDG_VIDEOS_DIR:-$HOME/Videos}"
+            mkdir -p "$dest_dir"
+            notify-send "YouTube" "📥 Descargando a ~/Videos:\n$title" 2>/dev/null || true
+            nohup bash -c "yt-dlp -o '$dest_dir/%(title)s.%(ext)s' '$url' && notify-send 'YouTube' '✅ Descarga completada:\n$title'" >/dev/null 2>&1 &
+            return 0
+            ;;
+        "ctrl-o")
+            local browser_cmd="${BROWSER:-zen}"
+            command -v "$browser_cmd" >/dev/null 2>&1 || browser_cmd="xdg-open"
+            nohup "$browser_cmd" "$url" >/dev/null 2>&1 &
+            return 0
+            ;;
+        "")
+            record_history "$selection"
+            printf "\033[90m· reproduciendo a pantalla completa:\033[0m %s\n" "$title"
+            mpv --fs --hwdec=auto "$url"
+            return 0
+            ;;
+    esac
+}
+
+browse_feed() {
+    local feed_url="$1"
+    local cache_file="$2"
+    local prompt_title="$3"
+    local interleave="${4:-false}"
+    local force_refresh="false"
+
+    while :; do
+        local feed_data
+        feed_data=$(fetch_feed "$feed_url" "$cache_file" "$force_refresh" "$interleave")
+        force_refresh="false"
+
+        browse_items "$feed_data" "$prompt_title"
+        local status=$?
+
+        if [ "$status" -eq 2 ]; then
+            rm -f "$cache_file"
+            force_refresh="true"
+            continue
+        fi
+        break
+    done
+}
+
+run_search() {
+    local query="$1"
+    if [ -z "$query" ]; then
+        read -rp "buscar › " query
+    fi
+    [ -z "$query" ] && return 0
+
+    local search_data
+    search_data=$(search_feed "$query")
+    browse_items "$search_data" "búsqueda: $query"
+}
+
+browse_history() {
+    if [ ! -s "$HISTORY_FILE" ]; then
+        printf "\033[90m· el historial está vacío.\033[0m\n"
+        sleep 1.2
+        return 0
+    fi
+
+    local hist_data
+    hist_data=$(tac "$HISTORY_FILE" | awk -F'\t' '!seen[$5]++')
+    browse_items "$hist_data" "historial"
+}
+
+# Si se pasaron argumentos desde terminal (ej. yt "bobicraft"), ir directo a búsqueda
+if [ "$#" -gt 0 ]; then
+    run_search "$*"
+    exit 0
+fi
+
+# Construir opciones del menú según presencia de cuenta/cookies
+build_menu_options() {
+    if [ "$COOKIE_STATUS" != "guest" ]; then
+        printf "· para ti          algoritmo personal variado (100)\n· suscripciones    canales suscritos\n· historial        reproducciones recientes\n· salir            cerrar"
+    else
+        printf "· tendencias       lo más visto globalmente (100)\n· historial        reproducciones recientes\n· salir            cerrar"
+    fi
+}
+
+# Menú principal: barra de búsqueda interactiva y explorador de feeds
+while :; do
+    local menu_header="escribe para buscar en youtube · enter para abrir [modo: $COOKIE_STATUS]"
+    choice=$(build_menu_options | fzf $FZF_THEME \
+        --prompt="youtube › " \
+        --header="$menu_header" \
+        --bind="enter:accept-or-print-query,alt-enter:print({q})+accept" \
+        --height=35% \
+        --layout=reverse \
+        --border=rounded)
+
+    status=$?
+    [ $status -ne 0 ] || [ -z "$choice" ] && exit 0
+
+    case "$choice" in
+        "· para ti"*)
+            browse_feed "https://www.youtube.com/" "$CACHE_DIR/feed_para_ti.tsv" "para ti" "true"
+            ;;
+        "· tendencias"*)
+            browse_feed "https://www.youtube.com/feed/trending" "$CACHE_DIR/feed_tendencias.tsv" "tendencias" "false"
+            ;;
+        "· suscripciones"*)
+            browse_feed "https://www.youtube.com/feed/subscriptions" "$CACHE_DIR/feed_suscripciones.tsv" "suscripciones" "false"
+            ;;
+        "· historial"*)
+            browse_history
+            ;;
+        "· salir"*)
+            kitty +kitten icat --clear --silent 2>/dev/null || true
+            exit 0
+            ;;
+        *)
+            run_search "$choice"
+            ;;
+    esac
+done
